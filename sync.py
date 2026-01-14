@@ -60,14 +60,12 @@ async def fetch_repositories(client: Client) -> list[dict[str, str]]:
     return repositories
 
 
-async def sync_repository(
-    target_dir: str, repo_name: str, repo_url: str, verbose: bool, semaphore: asyncio.Semaphore
-) -> str | None:
+async def sync_repository(target_dir: str, repo_name: str, repo_url: str, semaphore: asyncio.Semaphore) -> str | None:
     async with semaphore:
         local_path = os.path.abspath(os.path.join(target_dir, repo_name))
 
-        stdout = None if verbose else subprocess.DEVNULL
-        stderr = None if verbose else subprocess.DEVNULL
+        stdout = subprocess.DEVNULL
+        stderr = subprocess.DEVNULL
 
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
@@ -76,8 +74,17 @@ async def sync_repository(
             if os.path.exists(local_path):
                 if os.path.isdir(os.path.join(local_path, ".git")):
                     print(f"Updating {repo_name}...", flush=True)
+                    # 1. Fetch all branches, tags and prune deleted remote branches
                     process = await asyncio.create_subprocess_exec(
-                        "git", "pull", cwd=local_path, stdout=stdout, stderr=stderr, env=env
+                        "git",
+                        "fetch",
+                        "--all",
+                        "--prune",
+                        "--tags",
+                        cwd=local_path,
+                        stdout=stdout,
+                        stderr=stderr,
+                        env=env,
                     )
                     try:
                         await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
@@ -86,10 +93,26 @@ async def sync_repository(
                             process.terminate()
                         except:
                             pass
-                        return f"Timeout updating {repo_name} (>{GIT_TIMEOUT}s)"
+                        return f"Timeout fetching {repo_name} (>{GIT_TIMEOUT}s)"
 
                     if process.returncode != 0:
-                        return f"Error updating {repo_name}: git pull exited with {process.returncode}"
+                        return f"Error fetching {repo_name}: git fetch exited with {process.returncode}"
+
+                    # 2. Pull changes for the current branch (fast-forward only)
+                    process = await asyncio.create_subprocess_exec(
+                        "git", "pull", "--ff-only", cwd=local_path, stdout=stdout, stderr=stderr, env=env
+                    )
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        try:
+                            process.terminate()
+                        except:
+                            pass
+                        return f"Timeout pulling {repo_name} (>{GIT_TIMEOUT}s)"
+
+                    if process.returncode != 0:
+                        return f"Error pulling {repo_name}: git pull exited with {process.returncode}"
                 else:
                     return f"Skipping {repo_name}: Directory exists but is not a git repository."
             else:
@@ -125,7 +148,6 @@ async def sync_repository(
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize GitHub repositories to a local directory.")
     parser.add_argument("target_directory", help="The directory where repositories should be synced.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show git output.")
     args = parser.parse_args()
 
     target_dir = os.path.abspath(args.target_directory)
@@ -147,7 +169,7 @@ async def main() -> None:
     concurrency_limit = (os.cpu_count() or 1) * 2
     semaphore = asyncio.Semaphore(concurrency_limit)
 
-    tasks = [sync_repository(target_dir, repo["name"], repo["url"], args.verbose, semaphore) for repo in repos]
+    tasks = [sync_repository(target_dir, repo["name"], repo["url"], semaphore) for repo in repos]
     results = await asyncio.gather(*tasks)
 
     failures = [r for r in results if r is not None]
