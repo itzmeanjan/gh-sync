@@ -10,11 +10,12 @@ from gql.transport.aiohttp import AIOHTTPTransport
 
 GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql"
 GITHUB_API_TOKEN = "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"
+GIT_TIMEOUT = 300  # 5 minutes timeout per repo
 
 GITHUB_GRAPHQL_QUERY = """
 query {
     viewer {
-        repositories(first: 100, after: END_CURSOR, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], ownerAffiliations:[OWNER, ORGANIZATION_MEMBER, COLLABORATOR]) {
+        repositories(first: 100, after: END_CURSOR, affiliations: [OWNER], ownerAffiliations:[OWNER]) {
             totalCount
             pageInfo {
                 endCursor
@@ -60,12 +61,15 @@ async def fetch_repositories(client: Client) -> list[dict[str, str]]:
 
     return repositories
 
-async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbose: bool, semaphore: asyncio.Semaphore) -> None:
+async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbose: bool, semaphore: asyncio.Semaphore) -> str | None:
     async with semaphore:
         local_path = os.path.abspath(os.path.join(target_dir, repo_name))
         
         stdout = None if verbose else subprocess.DEVNULL
         stderr = None if verbose else subprocess.DEVNULL
+        
+        env = os.environ.copy()
+        env["GIT_TERMINAL_PROMPT"] = "0"
 
         try:
             if os.path.exists(local_path):
@@ -75,23 +79,41 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
                         "git", "pull",
                         cwd=local_path,
                         stdout=stdout,
-                        stderr=stderr
+                        stderr=stderr,
+                        env=env
                     )
-                    await process.wait()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        try:
+                            process.terminate()
+                        except:
+                            pass
+                        return f"Timeout updating {repo_name} (>{GIT_TIMEOUT}s)"
+
                     if process.returncode != 0:
-                        print(f"Error updating {repo_name}: git pull exited with {process.returncode}", flush=True)
+                        return f"Error updating {repo_name}: git pull exited with {process.returncode}"
                 else:
-                    print(f"Skipping {repo_name}: Directory exists but is not a git repository.", flush=True)
+                    return f"Skipping {repo_name}: Directory exists but is not a git repository."
             else:
                 print(f"Cloning {repo_name}...", flush=True)
                 process = await asyncio.create_subprocess_exec(
                     "git", "clone", repo_url, local_path,
                     stdout=stdout,
-                    stderr=stderr
+                    stderr=stderr,
+                    env=env
                 )
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
+                except asyncio.TimeoutError:
+                    try:
+                        process.terminate()
+                    except:
+                        pass
+                    return f"Timeout cloning {repo_name} (>{GIT_TIMEOUT}s)"
+
                 if process.returncode != 0:
-                    print(f"Error cloning {repo_name}: git clone exited with {process.returncode}", flush=True)
+                    return f"Error cloning {repo_name}: git clone exited with {process.returncode}"
         except asyncio.CancelledError:
             if 'process' in locals() and process.returncode is None:
                 try:
@@ -101,7 +123,9 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
                     pass
             raise
         except Exception as e:
-            print(f"Unexpected error with {repo_name}: {e}", flush=True)
+            return f"Unexpected error with {repo_name}: {e}"
+        
+        return None
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize GitHub repositories to a local directory.")
@@ -132,9 +156,18 @@ async def main() -> None:
         sync_repository(target_dir, repo["name"], repo["url"], args.verbose, semaphore)
         for repo in repos
     ]
-    await asyncio.gather(*tasks)
+    results = await asyncio.gather(*tasks)
 
-    print("Synchronization complete.", flush=True)
+    failures = [r for r in results if r is not None]
+
+    print("-" * 20, flush=True)
+    if failures:
+        print(f"Synchronization finished with {len(failures)} failures:", flush=True)
+        for error in failures:
+            print(f"  - {error}", flush=True)
+        sys.exit(1)
+    else:
+        print("Synchronization complete. All repositories updated successfully.", flush=True)
 
 if __name__ == '__main__':
     try:
