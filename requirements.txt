@@ -1,0 +1,1 @@
+gql[aiohttp]==4.0.0
