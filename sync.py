@@ -30,6 +30,7 @@ query {
 }
 """
 
+
 async def fetch_repositories(client: Client) -> list[dict[str, str]]:
     repositories = []
     end_cursor = "null"
@@ -47,27 +48,27 @@ async def fetch_repositories(client: Client) -> list[dict[str, str]]:
 
             for node in repos_data["nodes"]:
                 if node:
-                    repositories.append({
-                        "name": node["name"],
-                        "url": node["url"]
-                    })
+                    repositories.append({"name": node["name"], "url": node["url"]})
 
             print(f"Fetched {len(repositories)}/{num_total_repos} GitHub Repositories", flush=True)
 
             if not has_more_repos:
                 break
-            
+
             end_cursor = f'"{cursor}"'
 
     return repositories
 
-async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbose: bool, semaphore: asyncio.Semaphore) -> str | None:
+
+async def sync_repository(
+    target_dir: str, repo_name: str, repo_url: str, verbose: bool, semaphore: asyncio.Semaphore
+) -> str | None:
     async with semaphore:
         local_path = os.path.abspath(os.path.join(target_dir, repo_name))
-        
+
         stdout = None if verbose else subprocess.DEVNULL
         stderr = None if verbose else subprocess.DEVNULL
-        
+
         env = os.environ.copy()
         env["GIT_TERMINAL_PROMPT"] = "0"
 
@@ -76,11 +77,7 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
                 if os.path.isdir(os.path.join(local_path, ".git")):
                     print(f"Updating {repo_name}...", flush=True)
                     process = await asyncio.create_subprocess_exec(
-                        "git", "pull",
-                        cwd=local_path,
-                        stdout=stdout,
-                        stderr=stderr,
-                        env=env
+                        "git", "pull", cwd=local_path, stdout=stdout, stderr=stderr, env=env
                     )
                     try:
                         await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
@@ -98,10 +95,7 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
             else:
                 print(f"Cloning {repo_name}...", flush=True)
                 process = await asyncio.create_subprocess_exec(
-                    "git", "clone", repo_url, local_path,
-                    stdout=stdout,
-                    stderr=stderr,
-                    env=env
+                    "git", "clone", repo_url, local_path, stdout=stdout, stderr=stderr, env=env
                 )
                 try:
                     await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
@@ -115,7 +109,7 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
                 if process.returncode != 0:
                     return f"Error cloning {repo_name}: git clone exited with {process.returncode}"
         except asyncio.CancelledError:
-            if 'process' in locals() and process.returncode is None:
+            if "process" in locals() and process.returncode is None:
                 try:
                     process.terminate()
                     await process.wait()
@@ -124,8 +118,9 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
             raise
         except Exception as e:
             return f"Unexpected error with {repo_name}: {e}"
-        
+
         return None
+
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize GitHub repositories to a local directory.")
@@ -138,7 +133,7 @@ async def main() -> None:
         os.makedirs(target_dir, exist_ok=True)
         print(f"Created target directory: {target_dir}", flush=True)
 
-    transport = AIOHTTPTransport(url=GITHUB_GRAPHQL_ENDPOINT, headers={'Authorization': f'bearer {GITHUB_API_TOKEN}'})
+    transport = AIOHTTPTransport(url=GITHUB_GRAPHQL_ENDPOINT, headers={"Authorization": f"bearer {GITHUB_API_TOKEN}"})
     client = Client(transport=transport, fetch_schema_from_transport=True)
 
     try:
@@ -151,11 +146,8 @@ async def main() -> None:
 
     concurrency_limit = (os.cpu_count() or 1) * 2
     semaphore = asyncio.Semaphore(concurrency_limit)
-    
-    tasks = [
-        sync_repository(target_dir, repo["name"], repo["url"], args.verbose, semaphore)
-        for repo in repos
-    ]
+
+    tasks = [sync_repository(target_dir, repo["name"], repo["url"], args.verbose, semaphore) for repo in repos]
     results = await asyncio.gather(*tasks)
 
     failures = [r for r in results if r is not None]
@@ -169,7 +161,8 @@ async def main() -> None:
     else:
         print("Synchronization complete. All repositories updated successfully.", flush=True)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
