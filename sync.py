@@ -7,9 +7,12 @@ import subprocess
 import sys
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
+from dotenv import load_dotenv
+
+load_dotenv()
 
 GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql"
-GITHUB_API_TOKEN = "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"
+GITHUB_API_TOKEN = os.getenv("GITHUB_API_TOKEN")
 GIT_TIMEOUT = 300  # 5 minutes timeout per repo
 
 GITHUB_GRAPHQL_QUERY = """
@@ -178,6 +181,12 @@ async def main() -> None:
     if not os.path.exists(target_dir):
         os.makedirs(target_dir, exist_ok=True)
         print(f"Created target directory: {target_dir}", flush=True)
+
+    if not GITHUB_API_TOKEN:
+        print("Error: GITHUB_API_TOKEN not found in environment variables or .env file.", file=sys.stderr)
+        print("Please create a .env file based on .env.example and add your token.", file=sys.stderr)
+
+        sys.exit(1)
 
     transport = AIOHTTPTransport(url=GITHUB_GRAPHQL_ENDPOINT, headers={"Authorization": f"bearer {GITHUB_API_TOKEN}"})
     client = Client(transport=transport, fetch_schema_from_transport=True)
