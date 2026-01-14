@@ -64,39 +64,44 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, verbos
     async with semaphore:
         local_path = os.path.abspath(os.path.join(target_dir, repo_name))
         
-        # Setup stdout/stderr based on verbose flag
         stdout = None if verbose else subprocess.DEVNULL
         stderr = None if verbose else subprocess.DEVNULL
 
-        if os.path.exists(local_path):
-            if os.path.isdir(os.path.join(local_path, ".git")):
-                print(f"Updating {repo_name}...", flush=True)
-                try:
-                    # Using asyncio.to_thread for blocking subprocess.run
-                    await asyncio.to_thread(
-                        subprocess.run,
-                        ["git", "pull"],
+        try:
+            if os.path.exists(local_path):
+                if os.path.isdir(os.path.join(local_path, ".git")):
+                    print(f"Updating {repo_name}...", flush=True)
+                    process = await asyncio.create_subprocess_exec(
+                        "git", "pull",
                         cwd=local_path,
-                        check=True,
                         stdout=stdout,
                         stderr=stderr
                     )
-                except subprocess.CalledProcessError as e:
-                    print(f"Error updating {repo_name}: {e}", flush=True)
+                    await process.wait()
+                    if process.returncode != 0:
+                        print(f"Error updating {repo_name}: git pull exited with {process.returncode}", flush=True)
+                else:
+                    print(f"Skipping {repo_name}: Directory exists but is not a git repository.", flush=True)
             else:
-                print(f"Skipping {repo_name}: Directory exists but is not a git repository.", flush=True)
-        else:
-            print(f"Cloning {repo_name}...", flush=True)
-            try:
-                await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "clone", repo_url, local_path],
-                    check=True,
+                print(f"Cloning {repo_name}...", flush=True)
+                process = await asyncio.create_subprocess_exec(
+                    "git", "clone", repo_url, local_path,
                     stdout=stdout,
                     stderr=stderr
                 )
-            except subprocess.CalledProcessError as e:
-                print(f"Error cloning {repo_name}: {e}", flush=True)
+                await process.wait()
+                if process.returncode != 0:
+                    print(f"Error cloning {repo_name}: git clone exited with {process.returncode}", flush=True)
+        except asyncio.CancelledError:
+            if 'process' in locals() and process.returncode is None:
+                try:
+                    process.terminate()
+                    await process.wait()
+                except ProcessLookupError:
+                    pass
+            raise
+        except Exception as e:
+            print(f"Unexpected error with {repo_name}: {e}", flush=True)
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize GitHub repositories to a local directory.")
@@ -132,4 +137,8 @@ async def main() -> None:
     print("Synchronization complete.", flush=True)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted by user. Shutting down...", flush=True)
+        sys.exit(0)
