@@ -113,12 +113,36 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, semaph
 
                     if process.returncode != 0:
                         return f"Error pulling {repo_name}: git pull exited with {process.returncode}"
+
+                    # 3. Update submodules recursively
+                    process = await asyncio.create_subprocess_exec(
+                        "git",
+                        "submodule",
+                        "update",
+                        "--init",
+                        "--recursive",
+                        cwd=local_path,
+                        stdout=stdout,
+                        stderr=stderr,
+                        env=env,
+                    )
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        try:
+                            process.terminate()
+                        except:
+                            pass
+                        return f"Timeout updating submodules for {repo_name} (>{GIT_TIMEOUT}s)"
+
+                    if process.returncode != 0:
+                        return f"Error updating submodules for {repo_name}: git submodule update exited with {process.returncode}"
                 else:
                     return f"Skipping {repo_name}: Directory exists but is not a git repository."
             else:
                 print(f"Cloning {repo_name}...", flush=True)
                 process = await asyncio.create_subprocess_exec(
-                    "git", "clone", repo_url, local_path, stdout=stdout, stderr=stderr, env=env
+                    "git", "clone", "--recursive", repo_url, local_path, stdout=stdout, stderr=stderr, env=env
                 )
                 try:
                     await asyncio.wait_for(process.wait(), timeout=GIT_TIMEOUT)
