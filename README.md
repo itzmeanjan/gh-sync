@@ -1,4 +1,4 @@
-# fetch-gh-repos
+# gh-sync
 
 A Python script to synchronize all your personal GitHub repositories to a local directory, concurrently.
 
@@ -21,8 +21,8 @@ This tool automates the process of cloning and updating local copies of your Git
 cp .env.example .env
 ```
 
-3. Edit `.env` and add your [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens).
-4. Setup the environment.
+1. Edit `.env` and add your [GitHub Personal Access Token](https://github.com/settings/personal-access-tokens).
+2. Setup the environment.
 
 ```bash
 make setup
@@ -34,7 +34,7 @@ make setup
 
 ```bash
 source .venv/bin/activate
-python sync.py /path/to/your/local/repos
+python gh-sync.py /path/to/your/local/repos
 ```
 
 ## Development
