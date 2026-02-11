@@ -37,6 +37,12 @@ source .venv/bin/activate
 python gh-sync.py /path/to/your/local/repos
 ```
 
+By default, it synchronizes repositories one by one (concurrency = 1). You can increase this using the `--concurrency` (or `-c`) flag:
+
+```bash
+python gh-sync.py /path/to/your/local/repos --concurrency 4
+```
+
 ## Development
 
 - Source formatting with `make format`.

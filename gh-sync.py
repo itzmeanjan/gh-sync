@@ -175,6 +175,13 @@ async def sync_repository(target_dir: str, repo_name: str, repo_url: str, semaph
 async def main() -> None:
     parser = argparse.ArgumentParser(description="Synchronize GitHub repositories to a local directory.")
     parser.add_argument("target_directory", help="The directory where repositories should be synced.")
+    parser.add_argument(
+        "-c",
+        "--concurrency",
+        type=int,
+        default=1,
+        help="The number of concurrent repository synchronizations (default: 1).",
+    )
     args = parser.parse_args()
 
     target_dir = os.path.abspath(args.target_directory)
@@ -197,10 +204,8 @@ async def main() -> None:
         print(f"Failed to fetch repositories: {e}", flush=True)
         sys.exit(1)
 
-    print(f"Comparing and syncing {len(repos)} repositories in parallel...", flush=True)
-
-    concurrency_limit = (os.cpu_count() or 1) * 2
-    semaphore = asyncio.Semaphore(concurrency_limit)
+    print(f"Comparing and syncing {len(repos)} repositories with concurrency {args.concurrency}...", flush=True)
+    semaphore = asyncio.Semaphore(args.concurrency)
 
     tasks = [sync_repository(target_dir, repo["name"], repo["url"], semaphore) for repo in repos]
     results = await asyncio.gather(*tasks)
